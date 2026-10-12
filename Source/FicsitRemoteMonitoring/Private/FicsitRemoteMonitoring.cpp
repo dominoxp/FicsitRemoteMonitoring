@@ -29,6 +29,7 @@
 #include "Endpoints/World/Resources.h"
 #include "Endpoints/World/Session.h"
 #include "Engine/World.h"
+#include "GameFramework/GameStateBase.h"
 #include "Libraries/Validation.h"
 #include "Misc/FileHelper.h"
 #include "Patching/NativeHookManager.h"
@@ -900,7 +901,9 @@ FCallEndpointResponse AFicsitRemoteMonitoring::CallEndpoint(UObject* WorldContex
 	TArray<FString> AvailableMethods;
     bool bEndpointFound = false;
 
-	if (!IsValid(WorldContext) || !IsValid(WorldContext->GetWorld()))
+	// Reject calls while the world is still loading (e.g. right after server startup) or being torn down;
+	// game state and subsystems may not be initialized yet and endpoints would read invalid memory.
+	if (!IsWorldReady(WorldContext))
 	{
 		UE_LOG(LogHttpServer, Warning, TEXT("Blocked API call: World not ready."));
 		ErrorCode = 503;
@@ -933,10 +936,18 @@ FCallEndpointResponse AFicsitRemoteMonitoring::CallEndpoint(UObject* WorldContex
         try {
             if ((EndpointInfo.bRequireGameThread || IsGarbageCollecting()) && !IsInGameThread()) {
                 FThreadSafeBool bAllocationComplete = false;
-                AsyncTask(ENamedThreads::GameThread, [&EndpointInfo, WorldContext, RequestData, &JsonArray, &bAllocationComplete, &ErrorCode, &bSuccess]() {
-					if (EndpointInfo.FunctionPtr)
+                TWeakObjectPtr<UObject> WeakWorldContext = WorldContext;
+                AsyncTask(ENamedThreads::GameThread, [this, &EndpointInfo, WeakWorldContext, RequestData, &JsonArray, &bAllocationComplete, &ErrorCode, &bSuccess]() {
+					// The world may have changed between the check on the request thread and the execution here.
+					UObject* GameThreadWorldContext = WeakWorldContext.Get();
+					if (!IsWorldReady(GameThreadWorldContext))
 					{
-						(EndpointInfo.FunctionPtr)(WorldContext, RequestData, JsonArray);  // Use direct function call
+						ErrorCode = 503;
+						AddErrorJson(JsonArray, TEXT("Blocked API call: World not ready."));
+					}
+					else if (EndpointInfo.FunctionPtr)
+					{
+						(EndpointInfo.FunctionPtr)(GameThreadWorldContext, RequestData, JsonArray);  // Use direct function call
 						ErrorCode = 200;
 						bSuccess = true;
 					}
@@ -981,6 +992,14 @@ FCallEndpointResponse AFicsitRemoteMonitoring::CallEndpoint(UObject* WorldContex
 
     Response.JsonValues = JsonArray;
     return Response;
+}
+
+bool AFicsitRemoteMonitoring::IsWorldReady(const UObject* WorldContext)
+{
+	if (!IsValid(WorldContext)) return false;
+
+	const UWorld* World = WorldContext->GetWorld();
+	return IsValid(World) && !World->bIsTearingDown && World->HasBegunPlay() && IsValid(World->GetGameState());
 }
 
 // Helper function to add error messages to JsonArray

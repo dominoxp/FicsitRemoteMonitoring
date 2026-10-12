@@ -200,6 +200,7 @@ public:
 	bool IsAuthorizedRequest(uWS::HttpRequest* req, FString RequiredToken);
 	void AddResponseHeaders(uWS::HttpResponse<false>* res, bool bIncludeContentType);
 	void AddErrorJson(TArray<TSharedPtr<FJsonValue>>& JsonArray, const FString& ErrorMessage);
+	static bool IsWorldReady(const UObject* WorldContext);
 		
 	TArray<FString> Flavor_Battery{};
 	TArray<FString> Flavor_Doggo{};

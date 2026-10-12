@@ -20,6 +20,14 @@ void USession::getSessionInfo(UObject* WorldContext, FRequestData RequestData, T
 	const auto GameState = WorldContext->GetWorld()->GetGameState<AFGGameState>();
 	const AFGTimeOfDaySubsystem* TimeOfDaySubSystem = AFGTimeOfDaySubsystem::Get(WorldContext);
 
+	// Both are not available until the world has fully loaded, e.g. when a client polls during server startup.
+	if (!IsValid(GameState) || !IsValid(TimeOfDaySubSystem)) {
+		TSharedPtr<FJsonObject> JError = MakeShared<FJsonObject>();
+		JError->SetStringField("error", TEXT("Session info not available yet: world is still loading."));
+		OutJsonArray.Add(MakeShared<FJsonValueObject>(JError));
+		return;
+	}
+
 	const auto PlayDuration = GameState->GetTotalPlayDuration();
 	
 	FString NodeRandomizationMode;
